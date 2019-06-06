@@ -286,19 +286,87 @@ class Iroha(object):
             transaction.payload.batch.CopyFrom(meta)
 
 
+class IrohaTlsOptions(object):
+    """
+    TLS options for torii
+    """
+
+    def __init__(self, ca_data, key_data=None, cert_data=None):
+        """
+        Create Iroha TLS options
+        :param ca_data: CA of irohad server in PEM format
+        :param key_data: private key of this client in PEM format
+        :param cert_data: certificate of this client in PEM format
+        """
+        self._ca_data = ca_data
+        self._key_data = key_data
+        self._cert_data = cert_data
+
+    @staticmethod
+    def from_files(ca_path, key_path=None, cert_path=None):
+        """
+        Create Iroha TLS options from files
+        :param ca_path: path to CA of irohad server in PEM format
+        :param key_path: path to the private key of this client in PEM format
+        :param cert_path: path to the certificate of this client in PEM format
+        :return: IrohaTlsOptions
+        """
+
+        with open(ca_path, "rb") as ca_file:
+            ca_data = ca_file.read()
+        if key_path:
+            with open(key_path, "rb") as key_file:
+                key_data = key_file.read()
+        else:
+            key_data = None
+
+        if cert_path:
+            with open(cert_path, "rb") as cert_file:
+                cert_data = cert_file.read()
+        else:
+            cert_data = None
+
+        return IrohaTlsOptions(ca_data, key_data, cert_data)
+
+    def get_grpc_credentials(self):
+        """
+        Create gRPC credentials from specified key files
+        :return: grpc.ChannelCredentials
+        """
+
+        return grpc.ssl_channel_credentials(
+            root_certificates=self._ca_data,
+            private_key=self._key_data,
+            certificate_chain=self._cert_data
+        )
+
+
 class IrohaGrpc(object):
     """
     Possible implementation of gRPC transport to Iroha
     """
 
-    def __init__(self, address=None, timeout=None):
+    def __init__(self, address=None, timeout=None, enable_tls=False, tls_options=None):
         """
         Create Iroha gRPC client
         :param address: Iroha Torii address with port, example "127.0.0.1:50051"
         :param timeout: timeout for network I/O operations in seconds
+        :param enable_tls: enable TLS for encryption
+        :param tls_options: TLS options for client authentication
         """
+        if tls_options and not enable_tls:
+            raise ValueError("tls_options requires enable_tls")
+
         self._address = address if address else '127.0.0.1:50051'
-        self._channel = grpc.insecure_channel(self._address)
+        if enable_tls:
+            credentials = None
+            if tls_options:
+                credentials = tls_options.get_grpc_credentials()
+            else:
+                credentials = grpc.ssl_channel_credentials()
+            self._channel = grpc.secure_channel(self._address, credentials)
+        else:
+            self._channel = grpc.insecure_channel(self._address)
         self._timeout = timeout
         self._command_service_stub = endpoint_pb2_grpc.CommandService_v1Stub(
             self._channel)
